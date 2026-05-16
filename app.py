@@ -22,9 +22,10 @@ MODEL_PATH     = "saved_models/GradientBoosting_model.pkl"
 THRESHOLD      = 0.15   # Best_Threshold from training
 
 # ── Decision zones ────────────────────────────────────────────────────────────
-# < THRESHOLD           → NO SEPSIS
-# THRESHOLD to ZONE_HIGH → UNCERTAIN → "consulter un spécialiste"
+# < ZONE_LOW            → NO SEPSIS
+# ZONE_LOW to ZONE_HIGH → UNCERTAIN → "consulter un spécialiste"
 # > ZONE_HIGH           → SEPSIS
+ZONE_LOW       = 0.10   # below this = clear NO SEPSIS
 ZONE_HIGH      = 0.20   # above this = clear SEPSIS alert
 
 LOG_FILE       = "predictions_log.csv"
@@ -123,43 +124,6 @@ def save_log(patient_dict, prob, verdict):
         row["verdict"]       = verdict
         writer.writerow(row)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
-# ══════════════════════════════════════════════════════════════════════════════
-with st.sidebar:
-    st.title("⚙️ Paramètres")
-    st.markdown("---")
-    st.markdown("**🤖 Modèle**")
-    st.markdown("GradientBoosting")
-    st.markdown(f"**🎯 Seuil optimal**")
-    st.markdown(f"`{THRESHOLD*100:.0f}%` — maximise le Recall")
-    st.markdown("**📊 Performances**")
-    st.markdown(
-        "AUC : **0.902** · Recall : **0.648**\n\n"
-        "Precision : **0.463** · F1 : **0.540**"
-    )
-    st.markdown("---")
-    st.markdown("**🚦 Zones de décision**")
-    st.success(f"🟢 < {10:.0f}% → Pas de sepsis")
-    st.warning(f"🟡 {10:.0f}–{ZONE_HIGH*100:.0f}% → Zone incertaine")
-    st.error(f"🔴 > {ZONE_HIGH*100:.0f}% → Sepsis probable")
-    st.markdown("---")
-
-    enable_log = st.checkbox("💾 Sauvegarder les prédictions", value=True)
-    if os.path.exists(LOG_FILE):
-        log_df = pd.read_csv(LOG_FILE)
-        st.markdown(f"📋 **{len(log_df)} cas enregistrés**")
-        with open(LOG_FILE, "rb") as f:
-            st.download_button(
-                "⬇️ Télécharger le log",
-                data=f,
-                file_name="predictions_log.csv",
-                mime="text/csv",
-            )
-        if st.button("🗑️ Effacer le log"):
-            os.remove(LOG_FILE)
-            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -286,6 +250,8 @@ def build_model_input(patient_dict):
 # ══════════════════════════════════════════════════════════════════════════════
 # PREDICT BUTTON
 # ══════════════════════════════════════════════════════════════════════════════
+enable_log = st.checkbox("💾 Sauvegarder les prédictions", value=True)
+
 predict_clicked = st.button(
     "🔍 Lancer la prédiction",
     type="primary",
@@ -320,7 +286,7 @@ if predict_clicked:
     col_info = st.columns(3)
     col_info[0].metric("Probabilité",  f"{prob_pct:.1f}%")
     col_info[1].metric("Seuil modèle", f"{THRESHOLD*100:.0f}%")
-    col_info[2].metric("Zone incertaine", f"{THRESHOLD*100:.0f}–{ZONE_HIGH*100:.0f}%")
+    col_info[2].metric("Zone incertaine", f"{ZONE_LOW*100:.0f}–{ZONE_HIGH*100:.0f}%")
 
     st.markdown("---")
 
@@ -328,22 +294,22 @@ if predict_clicked:
     # VERDICT — 3 zones
     # ══════════════════════════════════════════════════════════════════════════
 
-    if prob < THRESHOLD:
+    if prob < ZONE_LOW:
         # ── Zone 1: NO SEPSIS ─────────────────────────────────────────────────
         verdict = "PAS DE SEPSIS"
         st.success(
             f"## 🟢 PAS DE SEPSIS DÉTECTÉ\n\n"
-            f"Probabilité : **{prob_pct:.1f}%** — en dessous du seuil de {THRESHOLD*100:.0f}%\n\n"
+            f"Probabilité : **{prob_pct:.1f}%** — en dessous du seuil de {ZONE_LOW*100:.0f}%\n\n"
             f"→ Aucun signe prédictif de sepsis selon le modèle.\n\n"
             f"→ Continuer la surveillance clinique de routine."
         )
 
-    elif THRESHOLD <= prob <= ZONE_HIGH:
+    elif ZONE_LOW <= prob <= ZONE_HIGH:
         # ── Zone 2: UNCERTAIN ────────────────────────────────────────────────
         verdict = "ZONE INCERTAINE"
         st.warning(
             f"## 🟡 ZONE INCERTAINE\n\n"
-            f"Probabilité : **{prob_pct:.1f}%** — entre {THRESHOLD*100:.0f}% et {ZONE_HIGH*100:.0f}%\n\n"
+            f"Probabilité : **{prob_pct:.1f}%** — entre {ZONE_LOW*100:.0f}% et {ZONE_HIGH*100:.0f}%\n\n"
             f"⚠️ **Il est préférable de consulter un spécialiste en néonatologie.**\n\n"
             f"→ Le modèle détecte des signaux faibles mais insuffisants pour conclure.\n\n"
             f"→ Évaluation clinique approfondie recommandée.\n\n"
@@ -355,7 +321,7 @@ if predict_clicked:
         verdict = "SEPSIS PROBABLE"
         st.error(
             f"## 🔴 SEPSIS PROBABLE\n\n"
-            f"Probabilité : **{prob_pct:.1f}%** — au-dessus du seuil de {THRESHOLD*100:.0f}%\n\n"
+            f"Probabilité : **{prob_pct:.1f}%** — au-dessus du seuil de {ZONE_HIGH*100:.0f}%\n\n"
             f"🚨 **Prise en charge médicale immédiate recommandée.**\n\n"
             f"→ Hémoculture en urgence avant toute antibiothérapie.\n\n"
             f"→ Bilan biologique complet : NFS, CRP, procalcitonine, bilan métabolique.\n\n"
@@ -365,7 +331,7 @@ if predict_clicked:
     # ── Disclaimer ───────────────────────────────────────────────────────────
     st.info(
         "⚕️ **Avertissement médical** — Ce résultat est une aide à la décision "
-        "basée sur un modèle de machine learning entraîné sur MIMIC-III. "
+        "basée sur un modèle de machine learning"
         "Il ne remplace pas le jugement clinique d'un médecin spécialiste."
     )
 
